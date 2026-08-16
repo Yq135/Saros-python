@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node.js
+node_modules/
+
+# macOS
+.DS_Store
+
+# Saros 本地数据与密钥（cookie、媒体归档）
+backend/data/

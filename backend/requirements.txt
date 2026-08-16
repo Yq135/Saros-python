@@ -1,0 +1,35 @@
+# Saros 后端依赖（conda 环境 saros，Python 3.10）
+
+# Web 框架
+fastapi
+uvicorn[standard]
+pydantic-settings
+
+# HTTP 客户端（搜索/抽取兜底/TestClient）
+httpx
+
+# 数据库：PostgreSQL + pgvector
+psycopg[binary]
+pgvector
+
+# LLM（OpenAI 兼容协议，DeepSeek/Qwen 等国产模型）
+openai
+
+# 中文分词（标签命中打分）
+jieba
+
+# 搜索
+ddgs
+
+# 网页正文抽取
+trafilatura
+
+# B 站视频下载
+yt-dlp
+
+# 本地嵌入（CPU 推理）
+sentence-transformers
+
+# 测试
+pytest
+pytest-asyncio

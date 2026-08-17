@@ -56,17 +56,21 @@ dev.sh                 # 一键起前后端
 
 ## 数据模型（关键表）
 
-- `tags`(name UNIQUE) — 问答/网页/知识点**共用标签空间**，利于知识碰撞
-- `knowledge_points`（含 pgvector 向量列，id 与向量一一对应）+ `knowledge_point_tags`
-- `qa_history`（question, answer, sources_json, retrieved_kp_ids, 标签关联表）
-- `webpages` + `webpage_questions`（题干 + reference_answer 参考答案）
-- `video_jobs`（status/progress/step/error/三件套路径/outline_md）+ `video_segments`（带 start_ts/end_ts 的字幕段，音频模式无此数据）+ `video_questions`（带 ts 可跳转）
+> 2026-08-17 DB 设计决议，完整字段以 `db_init.sql` 为准。
+
+- `users` — 单用户，user_id 应用层约定默认 1
+- `manual_knowledge`（手打笔记）+ `tags`（**正式标签仅属于手打笔记**，UNIQUE(manual_knowledge_id, name)；方案B：其他模块 AI 标签仅为 suggested_tags 推荐文本，历史筛选以关键词为主）
+- `qa_sessions`（question, answer, sources_json, retrieved_kp_ids, suggested_tags 文本数组）
+- `web_articles` + `webpage_questions`（题干 + reference_answer 参考答案，题目生成失败正文仍可入库）
+- `bilibili_tasks`（status: PENDING/PROCESSING/SUCCESS/FAILED + progress/step/error，UNIQUE(user_id, bvid)）+ `bilibili_videos`（一任务一视频，task_id NOT NULL UNIQUE 级联删除；mode: CC/AI/AUDIO；三件套路径含字幕文件；outline_md）+ `video_segments`（start_ts/end_ts 字幕段，AUDIO 模式无数据）+ `video_questions`（带 ts + 参考答案）
+- `embeddings`（VECTOR(512)，当前**仅嵌入手打笔记** source_type='MANUAL'，含 user_id）
+- 所有含 `updated_at` 的表由触发器自动更新
 
 ## API 概要（前缀 /api）
 
 - **问答**：`POST /api/qa/ask` → **SSE 流**（`start` 先回来源+引用的沉淀 id → `delta` 流式答案 → `done` 含完整答案+标签）；`GET /api/qa/history`（标签/关键词筛选）、`GET/DELETE /api/qa/{id}`
 - **网页**：`POST /api/webpages`（同步，约 20-40s）→ 列表/详情/删除
-- **B站**：`POST /api/videos` → `202 {job_id}`；`GET /api/videos/jobs/{id}`（前端 2s 轮询进度）、`/result`（大纲/题目/字幕段）、`/retry`（断点续跑）、DELETE；`GET /media/{bvid}/...` 文件服务（支持 HTTP Range，video 拖动可用）
+- **B站**：`POST /api/videos` → `202 {job_id}`；`GET /api/videos/jobs/{id}`（前端 2s 轮询进度）、`/result`（大纲/题目/字幕段）、`/retry`（断点续跑）、DELETE（删除任务=级联删视频知识 + 清理媒体文件）；`GET /media/{bvid}/...` 文件服务（支持 HTTP Range，video 拖动可用）
 - **沉淀**：`POST /api/knowledge`（建标签→嵌入→写向量）、列表（标签/关键词筛选）、`PUT/DELETE /api/knowledge/{id}`、`GET /api/tags?q=`（自动补全）
 - **设置**：`GET/PUT /api/config`（LLM 配置，提示重启生效）
 
@@ -74,13 +78,15 @@ dev.sh                 # 一键起前后端
 
 ### 混合 RAG 检索（模块 4 → 模块 1）
 
-`POST /qa/ask` 执行链：联网搜索（DDG→Bing 兜底，合并去重 top 8-10）→ 问题嵌入 KNN 取 50 候选 → 标签命中（jieba 分词匹配标签名）+ 关键词重叠打分 → **混合打分 `0.6*cosine + 0.3*lex_overlap + 0.15*tag_hit`**，阈值 0.35 取 top 5（全低于阈值则不带沉淀，避免噪音）→ 合成 Prompt（沉淀知识权威性高于搜索结果，冲突以沉淀为准并说明；引用 [n] 标注；资料不足明说）→ 流式输出 → 结束后一次轻量调用生成 3-5 个中文标签 → 入库（记录 retrieved_kp_ids 可追溯）
+`POST /qa/ask` 执行链：联网搜索（DDG→Bing 兜底，合并去重 top 8-10）→ 问题嵌入 KNN 取 50 候选（embeddings 当前**仅嵌手打笔记**）→ 标签命中（jieba 分词匹配手打笔记标签名）+ 关键词重叠打分 → **混合打分 `0.6*cosine + 0.3*lex_overlap + 0.15*tag_hit`**，阈值 0.35 取 top 5（全低于阈值则不带沉淀，避免噪音）→ 合成 Prompt（沉淀知识权威性高于搜索结果，冲突以沉淀为准并说明；引用 [n] 标注；资料不足明说）→ 流式输出 → 结束后一次轻量调用生成 3-5 个中文推荐标签（文本，转笔记候选）→ 入库（记录 retrieved_kp_ids 可追溯）
 
 ### B站 Pipeline（模块 3，状态落库为唯一真相源）
 
 ```
-queued → downloading(0-60) → [audio_fallback(60-75,无CC/AI字幕时)] → outlining(75-90) → questions(90-98) → completed(100)
-任意步失败 → failed（可 retry，已有文件跳过=断点续跑）
+status 状态值统一为 PENDING / PROCESSING / SUCCESS / FAILED，progress 细分阶段：
+PENDING → PROCESSING（downloading 0-60 → audio_fallback 60-75（无CC/AI字幕时）→ outlining 75-90 → questions 90-98）→ SUCCESS(100)
+任意步失败 → FAILED（可 retry，已有文件跳过=断点续跑）
+删除任务：级联删除视频知识（videos/segments/questions）+ 清理媒体文件
 ```
 - 并发限制：`asyncio.Semaphore(1)` 同时只跑一个视频任务；重活走 `to_thread`
 - 步骤：URL 校验（BV 号正则 + b23.tv 解析，非 B站 400）→ yt-dlp 下载（**用户提供的 cookie**、720p 封顶可配、字幕 json3 优先、progress_hooks 报进度）→ ffmpeg 提音频（视频下载失败降级仅音频+字幕）→ 字幕段归一化入 video_segments → **无 CC/AI 字幕时走音频模式**：下载最低分辨率视频（或仅音频）→ ffmpeg 提音频 → 按约 5 分钟切片 → 多模态音频模型逐片生成主题级大纲（时间戳为切片起点的**粗粒度**锚点，不转写）→ 有字幕时：**分块 ≤6000 字/块（≈8-9k token，DeepSeek 64K 安全余量）**，块间重叠 200 字 → Map 逐块生成带 `[MM:SS]` 锚点大纲（**强制只能用本块已有时间戳，防幻觉**）→ Reduce 合并去重 → 基于大纲出 5-8 题（带 ts 可跳转）

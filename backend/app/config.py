@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     audio_llm_api_key: str = ""
     audio_llm_model: str = "qwen3.5-omni-flash"
 
-    # 嵌入（本地 CPU）
+    # 嵌入（本地 CPU）；支持 HF 模型名或本地目录（相对路径基于 backend/）
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     hf_endpoint: str = "https://hf-mirror.com"
 
@@ -45,6 +45,14 @@ class Settings(BaseSettings):
         """cookie 文件绝对路径（相对路径基于 backend/ 目录）。"""
         p = Path(self.cookie_path)
         return p if p.is_absolute() else BACKEND_DIR / p
+
+    def embedding_model_path(self) -> str:
+        """嵌入模型路径：绝对路径原样返回；相对路径优先按 backend/ 解析，不存在则视为 HF 模型名。"""
+        p = Path(self.embedding_model)
+        if p.is_absolute():
+            return str(p)
+        candidate = BACKEND_DIR / p
+        return str(candidate) if candidate.exists() else self.embedding_model
 
 
 settings = Settings()

@@ -1,5 +1,5 @@
 -- ==========================================
--- Saros 数据库初始化脚本（v0.5 / 2026-08-17）
+-- Saros 数据库初始化脚本（v0.6 / 2026-08-18）
 -- 用法：psql -U <user> -d saros_db -f db_init.sql
 -- ==========================================
 
@@ -82,30 +82,52 @@ COMMENT ON COLUMN tags.name IS '标签名称';
 CREATE INDEX idx_tags_name ON tags(name); -- 用于自动补全搜索
 
 -- ==========================================
--- 5. 模块一：联网问答
+-- 5. 模块一：联网问答（多轮对话）
 -- ==========================================
-CREATE TABLE qa_sessions (
+-- v0.6 迁移说明：原 qa_sessions 表已更名 qa_messages 并新增 qa_conversations。
+-- 旧表无数据，直接删除即可：
+--   DROP TABLE IF EXISTS qa_sessions CASCADE;
+
+-- 会话表（一次围绕主题的多轮探讨；删除会话级联删除全部轮次）
+CREATE TABLE qa_conversations (
     id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    title VARCHAR(255) NOT NULL DEFAULT '',  -- 标题取首问截断（非 LLM 生成）
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE qa_conversations IS '问答会话表（多轮对话容器，标题取首问截断）';
+COMMENT ON COLUMN qa_conversations.user_id IS '创建人ID';
+COMMENT ON COLUMN qa_conversations.title IS '会话标题（首问截断，非 LLM 生成）';
+
+CREATE TRIGGER trg_qa_conversations_updated_at BEFORE UPDATE ON qa_conversations
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- 轮次表（一问一答一条记录；仅检索手打笔记，对话内容不入沉淀）
+CREATE TABLE qa_messages (
+    id BIGSERIAL PRIMARY KEY,
+    conversation_id BIGINT NOT NULL REFERENCES qa_conversations(id) ON DELETE CASCADE,
     user_id BIGINT NOT NULL REFERENCES users(id),
     question TEXT NOT NULL,
     answer TEXT,
     search_sources JSONB,
     referenced_knowledge_ids BIGINT[],  -- 引用的 manual_knowledge.id（仅检索手打笔记）
-    suggested_tags TEXT[],              -- AI推荐的标签（非正式，仅作转笔记候选）
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    suggested_tags TEXT[],              -- AI推荐的标签（非正式；仅会话首轮生成）
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-COMMENT ON TABLE qa_sessions IS '联网问答历史表（单轮问答记录）';
-COMMENT ON COLUMN qa_sessions.user_id IS '创建人ID';
-COMMENT ON COLUMN qa_sessions.question IS '用户问题';
-COMMENT ON COLUMN qa_sessions.answer IS '系统回答';
-COMMENT ON COLUMN qa_sessions.search_sources IS '搜索源';
-COMMENT ON COLUMN qa_sessions.referenced_knowledge_ids IS '引用的 manual_knowledge.id（沉淀知识）';
-COMMENT ON COLUMN qa_sessions.suggested_tags IS 'AI推荐的标签 (文本数组，非正式标签)';
+COMMENT ON TABLE qa_messages IS '问答轮次表（会话内一问一答；删除会话级联删除）';
+COMMENT ON COLUMN qa_messages.conversation_id IS '所属会话ID（级联删除）';
+COMMENT ON COLUMN qa_messages.user_id IS '创建人ID';
+COMMENT ON COLUMN qa_messages.question IS '用户问题';
+COMMENT ON COLUMN qa_messages.answer IS '系统回答';
+COMMENT ON COLUMN qa_messages.search_sources IS '本轮搜索源';
+COMMENT ON COLUMN qa_messages.referenced_knowledge_ids IS '本轮引用的 manual_knowledge.id（沉淀知识）';
+COMMENT ON COLUMN qa_messages.suggested_tags IS 'AI推荐的标签（文本数组，仅会话首轮生成）';
 
-CREATE TRIGGER trg_qa_sessions_updated_at BEFORE UPDATE ON qa_sessions
-FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- 按会话取轮次（时间升序展示）
+CREATE INDEX idx_qa_messages_conversation ON qa_messages(conversation_id, created_at);
 
 -- ==========================================
 -- 6. 模块二：网页出题

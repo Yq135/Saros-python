@@ -8,4 +8,4 @@ client = TestClient(app)
 def test_health():
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "version": "0.1.0"}
+    assert resp.json() == {"status": "ok", "version": "0.2.0"}

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import embeddings
 from app.db import ensure_user
-from app.routers import knowledge
+from app.routers import knowledge, qa
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -33,6 +33,7 @@ app.add_middleware(
 )
 
 app.include_router(knowledge.router)
+app.include_router(qa.router)
 
 
 @app.get("/api/health")

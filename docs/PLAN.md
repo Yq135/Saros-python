@@ -60,7 +60,7 @@ dev.sh                 # 一键起前后端
 
 - `users` — 单用户，user_id 应用层约定默认 1
 - `manual_knowledge`（手打笔记）+ `tags`（**正式标签仅属于手打笔记**，UNIQUE(manual_knowledge_id, name)；方案B：其他模块 AI 标签仅为 suggested_tags 推荐文本，历史筛选以关键词为主）
-- `qa_sessions`（question, answer, sources_json, retrieved_kp_ids, suggested_tags 文本数组）
+- `qa_conversations`（会话表：title 取首问截断；删除级联删轮次）+ `qa_messages`（轮次表：question, answer, sources_json, retrieved_kp_ids, suggested_tags 文本数组，**仅会话首轮生成标签**）
 - `web_articles` + `webpage_questions`（题干 + reference_answer 参考答案，题目生成失败正文仍可入库）
 - `bilibili_tasks`（status: PENDING/PROCESSING/SUCCESS/FAILED + progress/step/error，UNIQUE(user_id, bvid)）+ `bilibili_videos`（一任务一视频，task_id NOT NULL UNIQUE 级联删除；mode: CC/AI/AUDIO；三件套路径含字幕文件；outline_md）+ `video_segments`（start_ts/end_ts 字幕段，AUDIO 模式无数据）+ `video_questions`（带 ts + 参考答案）
 - `embeddings`（VECTOR(512)，当前**仅嵌入手打笔记** source_type='MANUAL'，含 user_id）
@@ -68,7 +68,7 @@ dev.sh                 # 一键起前后端
 
 ## API 概要（前缀 /api）
 
-- **问答**：`POST /api/qa/ask` → **SSE 流**（`start` 先回来源+引用的沉淀 id → `delta` 流式答案 → `done` 含完整答案+标签）；`GET /api/qa/history`（标签/关键词筛选）、`GET/DELETE /api/qa/{id}`
+- **问答**：`POST /api/qa/ask`（`{question, conversation_id?}`，不带 id 新建会话、带 id 追加轮次）→ **SSE 流**（`start` 先回来源+引用的沉淀 id+conversation_id → `delta` 流式答案 → `done` 含完整答案+标签）；`GET /api/qa/conversations?q=`（会话列表，关键词筛选）、`GET /api/qa/conversations/{id}`（会话详情：多轮消息按时间顺序）、`DELETE /api/qa/conversations/{id}`（级联删除）
 - **网页**：`POST /api/webpages`（同步，约 20-40s）→ 列表/详情/删除
 - **B站**：`POST /api/videos` → `202 {job_id}`；`GET /api/videos/jobs/{id}`（前端 2s 轮询进度）、`/result`（大纲/题目/字幕段）、`/retry`（断点续跑）、DELETE（删除任务=级联删视频知识 + 清理媒体文件）；`GET /media/{bvid}/...` 文件服务（支持 HTTP Range，video 拖动可用）
 - **沉淀**：`POST /api/knowledge`（建标签→嵌入→写向量）、列表（标签/关键词筛选）、`PUT/DELETE /api/knowledge/{id}`、`GET /api/tags?q=`（自动补全）
@@ -79,6 +79,8 @@ dev.sh                 # 一键起前后端
 ### 混合 RAG 检索（模块 4 → 模块 1）
 
 `POST /qa/ask` 执行链：联网搜索（DDG→Bing 兜底，合并去重 top 8-10）→ 问题嵌入 KNN 取 50 候选（embeddings 当前**仅嵌手打笔记**）→ 标签命中（jieba 分词匹配手打笔记标签名）+ 关键词重叠打分 → **混合打分 `0.6*cosine + 0.3*lex_overlap + 0.15*tag_hit`**，阈值 0.35 取 top 5（全低于阈值则不带沉淀，避免噪音）→ 合成 Prompt（沉淀知识权威性高于搜索结果，冲突以沉淀为准并说明；引用 [n] 标注；资料不足明说）→ 流式输出 → 结束后一次轻量调用生成 3-5 个中文推荐标签（文本，转笔记候选）→ 入库（记录 retrieved_kp_ids 可追溯）
+
+多轮追问：同一会话内**每轮独立**走上述完整链路（追问可能引入新话题，需重新搜索与检索）；追问轮额外加载该会话**最近 6 轮**（问题全文 + 回答截断 1000 字）作为对话历史上下文（纯文本进入 Prompt，不带 `[n]` 编号）；推荐标签**仅会话首轮生成**；对话内容只存 qa_messages 历史，**不入沉淀**（沉淀入口仅模块四）。
 
 ### B站 Pipeline（模块 3，状态落库为唯一真相源）
 
@@ -105,7 +107,7 @@ PENDING → PROCESSING（downloading 0-60 → audio_fallback 60-75（无CC/AI字
 |---|---|---|
 | M0 脚手架 | 后端 FastAPI 骨架 + 前端 Vite/Element Plus/路由/代理 + .gitignore + dev.sh | 前后端同起，导航壳可见 |
 | M1 模块 4 | PG/pgvector 建表 + 嵌入；knowledge/tags CRUD；KnowledgeView（禁粘贴） | 手录知识点→打标签→筛选正常，嵌入就绪 |
-| M2 模块 1 | search.py；混合检索 + SSE 流式 + 标签；QaView + 历史 | **1+4 核心闭环达成**：提问→联网回答带引用→关联沉淀→历史可查 |
+| M2 模块 1 | search.py；混合检索 + SSE 流式 + 标签；QaView（左右分栏：会话列表+对话流）+ 多轮对话 + 会话历史 | **1+4 核心闭环达成**：提问→联网回答带引用→关联沉淀→多轮追问→历史可查 |
 | M3 模块 2 | trafilatura + Jina 兜底抽取；webpages API；WebpageView | URL→正文+3-5 题+标签入库 |
 | M4 模块 3 | 下载/cookie/字幕/媒体服务/详情页 → 音频模型兜底 → 大纲+出题 → retry/清扫打磨 | 链接→归档三件套→带时间戳大纲→点击跳转播放 |
 | M5 打磨 | 设置页、README 使用说明、补齐测试 | 可日常使用 |

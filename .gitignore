@@ -225,3 +225,5 @@ node_modules/
 
 # Saros 本地数据与密钥（cookie、媒体归档）
 backend/data/
+/.idea/
+/.claude/

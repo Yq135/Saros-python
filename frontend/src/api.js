@@ -45,16 +45,23 @@ function parseSSEBlock(raw) {
   }
 }
 
-// 发送请求并按 SSE 事件流逐块回调 onEvent(event, data)
-async function requestStream(path, options, onEvent) {
+// 发起 SSE 请求并校验状态码（非 2xx 抛 Error，detail 取响应体）
+async function openStream(path, options) {
   const res = await fetch(BASE + path, {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   })
   if (!res.ok) {
     const body = await res.json().catch(() => null)
-    throw new Error(body?.detail || `请求失败（HTTP ${res.status}）`)
+    const err = new Error(body?.detail || `请求失败（HTTP ${res.status}）`)
+    err.body = body
+    throw err
   }
+  return res
+}
+
+// 消费 SSE 响应流：按事件逐块回调 onEvent(event, data)
+async function consumeStream(res, onEvent) {
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buf = ''
@@ -70,6 +77,10 @@ async function requestStream(path, options, onEvent) {
       if (ev) onEvent(ev.event, ev.data)
     }
   }
+}
+
+async function requestStream(path, options, onEvent) {
+  consumeStream(await openStream(path, options), onEvent)
 }
 
 export const qaApi = {
@@ -96,4 +107,37 @@ export const qaApi = {
   },
   getConversation: (id) => request(`/qa/conversations/${id}`),
   removeConversation: (id) => request(`/qa/conversations/${id}`, { method: 'DELETE' }),
+}
+
+// ---------- 模块二：网页出题 ----------
+
+export const webpageApi = {
+  // 提交 URL（SSE 流）：onEvent(event, data)，事件为 step / done / error
+  // URL 已收录：抛 Error 且 err.body.existing_id 为已有文章 id（前端跳转详情）
+  create: async (data, onEvent, signal) => {
+    const res = await fetch(BASE + '/webpages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: data.url }),
+      signal,
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      const err = new Error(body?.detail || `请求失败（HTTP ${res.status}）`)
+      err.body = body
+      throw err
+    }
+    await consumeStream(res, onEvent)
+  },
+  // 重新生成题目（SSE 流）：事件为 step / done / error
+  regenerate: (id, onEvent, signal) =>
+    requestStream(`/webpages/${id}/regenerate`, { method: 'POST', signal }, onEvent),
+  list: (params = {}) => {
+    const qs = new URLSearchParams()
+    if (params.q) qs.set('q', params.q)
+    const s = qs.toString()
+    return request('/webpages' + (s ? `?${s}` : ''))
+  },
+  get: (id) => request(`/webpages/${id}`),
+  remove: (id) => request(`/webpages/${id}`, { method: 'DELETE' }),
 }

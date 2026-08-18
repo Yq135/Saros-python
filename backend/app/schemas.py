@@ -65,3 +65,35 @@ class QAConversationDetail(BaseModel):
     title: str
     created_at: datetime
     messages: list[QAMessageOut]
+
+
+# ---------- 模块二：网页出题 ----------
+
+class WebpageCreateRequest(BaseModel):
+    url: str = Field(..., min_length=1, max_length=1024, description="网页 URL")
+
+
+class WebpageQuestionOut(BaseModel):
+    id: int
+    question: str
+    reference_answer: str = ""
+
+
+class WebArticleListItem(BaseModel):
+    id: int
+    url: str
+    title: str = ""
+    content_preview: str = ""  # 正文截断预览（全文仅详情接口返回）
+    suggested_tags: list[str] = Field(default_factory=list)
+    question_count: int = 0
+    created_at: datetime
+
+
+class WebArticleDetail(BaseModel):
+    id: int
+    url: str
+    title: str = ""
+    content: str
+    suggested_tags: list[str] = Field(default_factory=list)
+    questions: list[WebpageQuestionOut] = Field(default_factory=list)
+    created_at: datetime

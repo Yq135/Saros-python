@@ -1,20 +1,21 @@
 """全部中文 Prompt 模板（语气遵循「温柔陪伴」：不说教、不冷冰冰、像陪读伙伴）。
 
-仅模块一使用；模块二/三的 Prompt 到对应里程碑再补充。
+模块一：回答合成/推荐标签；模块二：网页出题（题目+标签一次生成）；模块三的 Prompt 到对应里程碑再补充。
 """
 import json
 import re
 
 # 回答合成：温柔陪伴语气 + 引用/冲突/诚实规则
-ANSWER_SYSTEM = """你是 Saros，一个温柔陪伴的个人知识助手。语气像陪读伙伴：不说教、不冷冰冰，回答清晰有温度。
+ANSWER_SYSTEM = """你是 Saros，一个高度专业的个人知识沉淀与拓展助手。语气像陪读伙伴：温柔、不冷冰冰，回答清晰有温度。你的核心任务是结合用户的【沉淀笔记】和【实时网络搜索结果】，为用户提供准确、有深度且易于理解的答案。
 
 回答规则：
 1. 用中文 Markdown 输出，结构清晰（可用小标题、列表）。
-2. 引用联网搜索资料时，在对应句末用 [n] 标注，n 与「搜索结果」列表中的编号一致。
-3. 用户沉淀笔记的权威性高于搜索结果：两者冲突时以沉淀笔记为准，并温和地说明差异。
-4. 资料不足时明说（如「这一点我没找到可靠资料」），绝不编造事实或来源。
+2. 引用联网搜索资料回答的关键事实、数据或观点时，在对应句末用 [n] 标注，n 与「搜索结果」列表中的编号一致。
+3. 用户沉淀笔记的权威性高于搜索结果：两者冲突时以沉淀笔记为基础框架进行解答，并温和地说明差异。若笔记中信息不全，再使用【网络搜索结果】进行补充、拓展和最新事实核查。
+4. 诚实原则：如果提供的参考资料中完全没有相关信息，或者信息不足以回答问题，请直接回复：“抱歉，在您的个人笔记和网络资料中均未找到相关信息。”，绝不编造事实或来源，不要尝试强行作答。
 5. 本轮若没有搜索结果，仅基于沉淀笔记回答，并注明「本轮联网搜索不可用」。
-6. 若沉淀笔记与搜索结果都不足，直接说明无法回答，不要勉强。"""
+6. 若沉淀笔记与搜索结果都不足，直接说明无法回答，不要勉强。
+7. 拓展延伸（可选）：如果网络资料提供了笔记中没有的前沿观点或最新动态，请在此处补充说明，帮助用户拓宽认知。"""
 
 
 def build_answer_messages(
@@ -75,3 +76,60 @@ def parse_tags(text: str) -> list[str]:
         pass
     # 兜底：提取 "…"、「…」、'…' 中的文本
     return re.findall(r'["「\']([^"」\']{1,20})["」\']', text)[:5]
+
+
+# ---------------------------------------------------------------
+# 模块二：网页出题（题目 + 推荐标签一次生成，JSON 结构化输出）
+# ---------------------------------------------------------------
+
+QUESTION_SYSTEM = """你是出题助手。根据给定网页文章的正文，生成 3-5 道「读完后能检验是否掌握内容」的开放式问题，每题附参考答案，并提炼 3-5 个中文推荐标签。
+
+要求：
+1. 问题覆盖文章的核心概念与关键论证，避免琐碎细节；每道题都应能用文章内容完整回答。
+2. 参考答案具体、准确，直接引述文章要点，2-5 句话为宜。
+3. 标签为 2-6 个汉字的中文词，覆盖主题关键词。
+4. 只输出 JSON，格式：{"questions": [{"question": "题干", "reference_answer": "参考答案"}], "tags": ["标签1", "标签2"]}，不要输出其他内容。
+5. 若正文过短或信息不足，questions 可为空数组。"""
+
+
+def build_question_messages(*, title: str, content: str) -> list[dict]:
+    """组装出题请求：system + 用户消息（标题 + 正文）。"""
+    parts: list[str] = []
+    if title:
+        parts.append(f"文章标题：{title}")
+    parts.append(f"文章正文：\n{content}")
+    return [
+        {"role": "system", "content": QUESTION_SYSTEM},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]
+
+
+def _strip_code_fence(text: str) -> str:
+    """去除模型输出常见的外层 ```json ... ``` 包裹。"""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+        t = re.sub(r"\s*```$", "", t)
+    return t.strip()
+
+
+def parse_questions(text: str) -> tuple[list[dict], list[str]]:
+    """解析出题结果：(题目列表, 标签列表)。解析失败返回 ([], []) —— 文章仍保留，题目可后补。"""
+    try:
+        data = json.loads(_strip_code_fence(text))
+    except (json.JSONDecodeError, TypeError):
+        return [], []
+    questions: list[dict] = []
+    tags: list[str] = []
+    if isinstance(data, dict):
+        if isinstance(data.get("questions"), list):
+            for q in data["questions"]:
+                if not isinstance(q, dict):
+                    continue
+                question = str(q.get("question") or "").strip()
+                answer = str(q.get("reference_answer") or "").strip()
+                if question:
+                    questions.append({"question": question, "reference_answer": answer})
+        if isinstance(data.get("tags"), list):
+            tags = [str(t).strip() for t in data["tags"] if str(t).strip()][:5]
+    return questions[:5], tags

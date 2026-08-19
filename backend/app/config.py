@@ -25,10 +25,10 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "deepseek-chat"
 
-    # 音频模式多模态模型（通义 Qwen3.5-Omni，仅无 CC/AI 字幕时启用）
-    audio_llm_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    audio_llm_api_key: str = ""
-    audio_llm_model: str = "qwen3.5-omni-flash"
+    # 音频模式 ASR 转写（自建 mlx-qwen3-asr，OpenAI 兼容接口；仅无 CC/AI 字幕时启用）
+    asr_base_url: str = "http://100.100.61.45:9001/v1"
+    asr_api_key: str = ""
+    asr_model: str = "mlx-community/Qwen3-ASR-1.7B-bf16"
 
     # 嵌入（本地 CPU）；支持 HF 模型名或本地目录（相对路径基于 backend/）
     embedding_model: str = "BAAI/bge-small-zh-v1.5"

@@ -34,7 +34,7 @@
           scrolling="no"
         />
         <div v-if="detail.mode === 'AUDIO'" class="audio-note">
-          该视频无字幕（音频模式），大纲时间点为粗粒度锚点（约 ±5 分钟）
+          该视频无字幕（音频模式），大纲/字幕段基于语音转写（ASR）生成
         </div>
       </el-card>
 

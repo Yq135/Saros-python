@@ -243,7 +243,7 @@ CREATE TABLE video_segments (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
-COMMENT ON TABLE video_segments IS '字幕段表（详情页列表可点击跳转；音频模式无数据）';
+COMMENT ON TABLE video_segments IS '文本段表（详情页列表可点击跳转；字幕模式为字幕段，音频模式为 ASR 转写段）';
 COMMENT ON COLUMN video_segments.video_id IS '所属视频ID（级联删除）';
 COMMENT ON COLUMN video_segments.start_ts IS '起始时间（秒）';
 COMMENT ON COLUMN video_segments.end_ts IS '结束时间（秒）';

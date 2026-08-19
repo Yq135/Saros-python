@@ -1,12 +1,14 @@
-"""模块三任务编排：B 站视频「下载字幕 → 解析 → 大纲 → 出题 → 入库」。
+"""模块三任务编排：B 站视频「下载字幕（无则音频）→ 文本段 → 大纲 → 出题 → 入库」。
 
 由任务队列（task_queue.py）单 worker 串行调用 run_task(task_id)；
 yt-dlp / ffmpeg / LLM 均为同步阻塞调用，worker 侧用 asyncio.to_thread 执行。
 
-流程决议（v0.9）：不下载视频；先下字幕（CC→AI），下不到才下音频（音频模式，后续迭代）。
-步骤与进度（%）：解析链接 2 → 下载字幕 5-30 → 解析字幕 40 → 生成大纲 40-65
-→ 出题+标签 65-85 → 入库 100。
-断点续跑：字幕文件已存在时跳过下载；LLM 阶段重试后重新生成。
+流程决议（v0.10）：
+- 不下载视频；先下字幕（CC→AI）；无字幕走音频模式：下载音频流 → 约 5 分钟切片
+  → 自建 ASR（mlx-qwen3-asr）转写带时间戳文本 → 与字幕模式共用大纲/出题流程。
+步骤与进度（%）：解析链接 2 → 下载字幕 5-30 / 音频模式 5-45+切片转写 45-80
+→ 解析字幕 40 → 大纲 80/90 → 出题 90/95 → 入库 100。
+断点续跑：字幕/音频文件已存在时跳过下载；LLM 阶段重试后重新生成。
 """
 import json
 import logging
@@ -15,7 +17,7 @@ from pathlib import Path
 
 from app import llm, prompts
 from app.db import get_conn
-from app.services import subtitle_parser, video_download
+from app.services import asr, subtitle_parser, video_download
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -117,38 +119,61 @@ def _run(task_id: int) -> None:
     _update(task_id, status=STATUS_PROCESSING, progress=2, step="解析链接")
     bvid, p = video_download.parse_video_ref(url)
 
-    # 1. 下载字幕（CC → AI）；下载不到才下音频（音频模式，后续迭代）
+    # 1. 下载字幕（CC → AI）；无字幕 → 音频模式（下载音频 → ASR 转写）
     _update(task_id, step="下载字幕（官方 CC / AI 字幕）")
     _, _, title, mode, subtitle_path = video_download.download_subtitle(url)
+    audio_path = None
     if subtitle_path is None:
-        raise VideoTaskError("该视频没有官方 CC 字幕与 AI 字幕，音频模式尚未实现（后续迭代支持）")
-    _update(task_id, progress=30)
+        segments, audio_path = _audio_mode(task_id, url)
+        mode = "AUDIO"
+        _update(task_id, progress=80)
+    else:
+        _update(task_id, progress=30, step="解析字幕")
+        segments = subtitle_parser.parse_subtitle(subtitle_path)
+        if not segments:
+            raise VideoTaskError("字幕解析失败：字幕文件内容为空或格式异常，可重试")
+        _update(task_id, progress=40)
 
-    # 2. 解析字幕 → 字幕段
-    _update(task_id, step="解析字幕")
-    segments = subtitle_parser.parse_subtitle(subtitle_path)
-    if not segments:
-        raise VideoTaskError("字幕解析失败：字幕文件内容为空或格式异常，可重试")
-    _update(task_id, progress=40)
-
-    # 3. 大纲（字幕全文一次喂）
+    # 2. 大纲（字幕/ASR 转写文本全文一次喂）
     _update(task_id, step="生成大纲（LLM 提炼）")
     outline = _generate_outline(title, segments)
-    _update(task_id, progress=65)
+    _update(task_id, progress=90)
 
-    # 4. 出题（基于字幕全文）+ 推荐标签（基于大纲）
+    # 3. 出题（基于字幕/转写全文）+ 推荐标签（基于大纲）
     _update(task_id, step="生成题目与推荐标签（LLM）")
     questions, tags = _generate_questions(title, segments, outline)
-    _update(task_id, progress=85)
+    _update(task_id, progress=95)
 
-    # 5. 汇总入库（音频模式未实现，音频路径暂空）
+    # 4. 汇总入库
     _update(task_id, step="写入知识库")
     _save_video(
-        task_id, bvid, title, mode, subtitle_path, None, None,
+        task_id, bvid, title, mode, subtitle_path, audio_path, None,
         outline, segments, questions, tags,
     )
     _update(task_id, status=STATUS_SUCCESS, progress=100, step="完成")
     logger.info("任务 %s 完成（%s 模式，%d 小节，%d 题）", task_id, mode, len(outline), len(questions))
+
+
+def _audio_mode(task_id: int, url: str) -> tuple[list[dict], Path]:
+    """音频模式：下载音频流 → ffmpeg 约 5 分钟切片 → ASR 逐片转写 → 带时间戳文本段。
+
+    返回 (segments, audio_path)。ASR 输出带精确时间戳，后续与字幕模式共用流程。
+    """
+    _update(task_id, step="下载音频（audio-only 流）")
+    audio_path = video_download.download_audio(url, _download_progress(task_id, 5, 45))
+    _update(task_id, progress=45, step="音频切片并语音转写")
+    segments = asr.transcribe_audio(
+        audio_path,
+        audio_path.parent / f"{audio_path.stem}_segs",
+        progress_cb=lambda done, total: _update(
+            task_id,
+            step=f"语音转写（{done}/{total} 片）",
+            progress=45 + round(35 * done / total),
+        ),
+    )
+    if not segments:
+        raise VideoTaskError("语音转写失败：转写结果为空，请重试")
+    return segments, audio_path
 
 
 # ---------------------------------------------------------------

@@ -144,6 +144,18 @@ export const webpageApi = {
   remove: (id) => request(`/webpages/${id}`, { method: 'DELETE' }),
 }
 
+// ---------- M5：设置 ----------
+
+export const settingsApi = {
+  get: () => request('/settings'),
+  save: (data) => request('/settings', { method: 'PUT', body: JSON.stringify(data) }),
+  getCookie: () => request('/settings/cookie'),
+  // 保存 cookie 并立即校验，响应为 { valid, uname, uid, detail }
+  saveCookie: (content) =>
+    request('/settings/cookie', { method: 'PUT', body: JSON.stringify({ content }) }),
+  checkCookie: () => request('/settings/cookie/check', { method: 'POST' }),
+}
+
 // ---------- 模块三：B 站视频 ----------
 
 export const bilibiliApi = {

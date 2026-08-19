@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import embeddings
 from app.db import ensure_user
-from app.routers import bilibili, knowledge, qa, webpages
+from app.routers import bilibili, knowledge, qa, settings as settings_router, webpages
 from app.services import task_queue, video_download, video_task
 
 logger = logging.getLogger("uvicorn.error")
@@ -45,6 +45,7 @@ app.include_router(knowledge.router)
 app.include_router(qa.router)
 app.include_router(webpages.router)
 app.include_router(bilibili.router)
+app.include_router(settings_router.router)
 
 # 本地媒体静态服务（视频/音频/字幕）：StaticFiles 支持 Range 请求，播放器可拖动
 app.mount("/api/media", StaticFiles(directory=str(video_download.MEDIA_ROOT)), name="media")

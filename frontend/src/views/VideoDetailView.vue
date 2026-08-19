@@ -88,17 +88,23 @@
         </el-collapse>
       </el-card>
 
-      <!-- 字幕段（音频模式无数据） -->
+      <!-- 字幕段（默认折叠，用户一般不关注；音频模式无数据） -->
       <el-card v-if="detail.segments.length" shadow="never">
-        <template #header>
-          <span>字幕段（{{ detail.segments.length }} 条，点击时间可跳转）</span>
-        </template>
-        <div v-for="s in detail.segments" :key="s.id" class="seg-item">
-          <el-button link type="primary" class="time-btn" @click="jump(s.start_ts)">
-            {{ fmtTs(s.start_ts) }}
-          </el-button>
-          <span class="seg-text">{{ s.content }}</span>
-        </div>
+        <el-collapse>
+          <el-collapse-item>
+            <template #title>
+              <span class="seg-head">
+                字幕段（{{ detail.segments.length }} 条，点击展开，点击时间可跳转）
+              </span>
+            </template>
+            <div v-for="s in detail.segments" :key="s.id" class="seg-item">
+              <el-button link type="primary" class="time-btn" @click="jump(s.start_ts)">
+                {{ fmtTs(s.start_ts) }}
+              </el-button>
+              <span class="seg-text">{{ s.content }}</span>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
       </el-card>
     </template>
   </div>
@@ -222,6 +228,11 @@ onUnmounted(() => clearInterval(timer))
   padding: 4px 12px;
   font-size: 13px;
   color: var(--el-text-color-regular);
+}
+.seg-head {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--el-text-color-secondary);
 }
 .seg-item {
   display: flex;

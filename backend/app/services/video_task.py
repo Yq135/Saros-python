@@ -16,6 +16,7 @@ import shutil
 from pathlib import Path
 
 from app import llm, prompts
+from app.config import settings
 from app.db import get_conn
 from app.services import asr, subtitle_parser, video_download
 
@@ -119,20 +120,30 @@ def _run(task_id: int) -> None:
     _update(task_id, status=STATUS_PROCESSING, progress=2, step="解析链接")
     bvid, p = video_download.parse_video_ref(url)
 
-    # 1. 下载字幕（CC → AI）；无字幕 → 音频模式（下载音频 → ASR 转写）
-    _update(task_id, step="下载字幕（官方 CC / AI 字幕）")
-    _, _, title, mode, subtitle_path = video_download.download_subtitle(url)
+    # 1. 下载字幕（CC → AI）；无字幕或开启「跳过字幕」开关 → 音频模式（下载音频 → ASR 转写）
     audio_path = None
-    if subtitle_path is None:
+    if settings.skip_subtitle:
+        # 跳过字幕：ASR 转写带断句标点，大纲/出题质量更高（更耗时），用户可配
+        _update(task_id, step="已开启「跳过字幕」开关，直接音频模式")
+        _, _, info = video_download.fetch_video_info(url)
+        title = (info or {}).get("title") or ""
         segments, audio_path = _audio_mode(task_id, url)
         mode = "AUDIO"
+        subtitle_path = None
         _update(task_id, progress=80)
     else:
-        _update(task_id, progress=30, step="解析字幕")
-        segments = subtitle_parser.parse_subtitle(subtitle_path)
-        if not segments:
-            raise VideoTaskError("字幕解析失败：字幕文件内容为空或格式异常，可重试")
-        _update(task_id, progress=40)
+        _update(task_id, step="下载字幕（官方 CC / AI 字幕）")
+        _, _, title, mode, subtitle_path = video_download.download_subtitle(url)
+        if subtitle_path is None:
+            segments, audio_path = _audio_mode(task_id, url)
+            mode = "AUDIO"
+            _update(task_id, progress=80)
+        else:
+            _update(task_id, progress=30, step="解析字幕")
+            segments = subtitle_parser.parse_subtitle(subtitle_path)
+            if not segments:
+                raise VideoTaskError("字幕解析失败：字幕文件内容为空或格式异常，可重试")
+            _update(task_id, progress=40)
 
     # 2. 大纲（字幕/ASR 转写文本全文一次喂）
     _update(task_id, step="生成大纲（LLM 提炼）")

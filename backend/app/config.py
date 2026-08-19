@@ -38,8 +38,11 @@ class Settings(BaseSettings):
     search_providers: str = "ddgs,bing,baidu"
 
     # B 站 cookie 路径（相对路径基于 backend/）与清晰度上限
-    cookie_path: str = "data/cookies.txt"
+    cookie_path: str = "data/.cookies.txt"
     max_video_height: int = 720
+    # 跳过字幕下载：开启后不下载 CC/AI 字幕，直接走音频模式（ASR 转写带断句标点，
+    # 大纲/出题质量更高，但更耗时）；默认关
+    skip_subtitle: bool = False
 
     def cookie_file(self) -> Path:
         """cookie 文件绝对路径（相对路径基于 backend/ 目录）。"""

@@ -156,3 +156,38 @@ class BilibiliTaskDetail(BaseModel):
     subtitle_url: str | None = None
     segments: list[VideoSegmentOut] = Field(default_factory=list)
     questions: list[VideoQuestionOut] = Field(default_factory=list)
+
+
+# ---------- M5：设置页 ----------
+
+class SettingsOut(BaseModel):
+    llm_base_url: str
+    llm_api_key: str
+    llm_model: str
+    asr_base_url: str
+    asr_api_key: str
+    asr_model: str
+    cookie_path: str
+    skip_subtitle: bool
+
+
+class SettingsUpdate(BaseModel):
+    llm_base_url: str | None = None
+    llm_api_key: str | None = None
+    llm_model: str | None = None
+    asr_base_url: str | None = None
+    asr_api_key: str | None = None
+    asr_model: str | None = None
+    cookie_path: str | None = None
+    skip_subtitle: bool | None = None
+
+
+class CookieContentIn(BaseModel):
+    content: str = Field("", description="Netscape 格式 cookie 原文")
+
+
+class CookieCheckOut(BaseModel):
+    valid: bool
+    uname: str | None = None
+    uid: int | None = None
+    detail: str | None = None

@@ -27,6 +27,12 @@ def get_client() -> OpenAI:
     return _client
 
 
+def reset_client() -> None:
+    """设置页修改 LLM 配置后热刷新：重建客户端（base_url/api_key 即时生效）。"""
+    global _client
+    _client = None
+
+
 def stream_chat(messages: list[dict], *, temperature: float = 0.7, max_tokens: int = 2048):
     """流式对话：逐段产出文本增量（生成器）。读超时 300s：模型挂起时不会无限占用线程。"""
     stream = get_client().chat.completions.create(

@@ -22,19 +22,19 @@
     </el-card>
 
     <template v-else-if="detail">
-      <!-- 播放器 -->
+      <!-- 播放器：内嵌 B 站官方在线播放器，时间点跳转带 ?t= 参数重载 -->
       <el-card shadow="never" class="player-card">
-        <video
-          v-if="detail.video_url || detail.audio_url"
-          ref="playerRef"
-          :src="detail.video_url || detail.audio_url"
-          controls
-          preload="metadata"
+        <iframe
+          v-if="detail"
+          :key="iframeKey"
+          :src="playerSrc"
           class="player"
+          frameborder="0"
+          allowfullscreen
+          scrolling="no"
         />
-        <el-empty v-else description="媒体文件缺失" />
         <div v-if="detail.mode === 'AUDIO'" class="audio-note">
-          该视频无字幕（音频模式），正在播放本地音频
+          该视频无字幕（音频模式），大纲时间点为粗粒度锚点（约 ±5 分钟）
         </div>
       </el-card>
 
@@ -112,12 +112,20 @@ import { bilibiliApi } from '../api'
 
 const route = useRoute()
 const detail = ref(null)
-const playerRef = ref(null)
+const seekT = ref(0) // 播放器起始秒数（?t= 参数）
+const iframeKey = ref(0) // 变更即重载 iframe（跳转到新时间点）
 let timer = null
 
 const modeText = computed(
   () => ({ CC: 'CC 字幕', AI: 'AI 字幕', AUDIO: '音频模式' }[detail.value?.mode] || '')
 )
+
+// B 站官方在线播放器地址：bvid + 分集 + 起始秒数（关闭弹幕）
+const playerSrc = computed(() => {
+  const d = detail.value
+  if (!d) return ''
+  return `https://player.bilibili.com/player.html?bvid=${d.bvid}&page=${d.p || 1}&t=${seekT.value}&autoplay=0&danmaku=0`
+})
 
 function fmtTs(sec) {
   const total = Math.floor(sec ?? 0)
@@ -125,10 +133,8 @@ function fmtTs(sec) {
 }
 
 function jump(sec) {
-  const v = playerRef.value
-  if (!v) return
-  v.currentTime = sec
-  v.play().catch(() => {})
+  seekT.value = Math.floor(sec ?? 0)
+  iframeKey.value += 1
 }
 
 async function load() {
@@ -172,7 +178,7 @@ onUnmounted(() => clearInterval(timer))
 }
 .player {
   width: 100%;
-  max-height: 480px;
+  height: 480px;
   background: #000;
   border-radius: 6px;
 }

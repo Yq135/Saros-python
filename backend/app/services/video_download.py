@@ -216,46 +216,8 @@ def download_audio(url: str, progress_hook=None) -> Path:
     return audio
 
 
-def download_video(url: str, progress_hook=None) -> Path:
-    """下载视频（清晰度上限 MAX_VIDEO_HEIGHT），音视频流合并输出 mp4，返回本地文件路径。
-
-    DASH 流（高清）合并后为 mp4；低清单文件（flv）经 ffmpeg 转封装为 mp4，
-    保证浏览器 video 标签可播放。已存在则跳过下载。失败抛 VideoDownloadError。
-    """
-    bvid, p = parse_video_ref(url)
-    out_dir = media_dir(bvid)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / media_name(bvid, p, "mp4")
-    if target.exists():
-        logger.info("视频已存在，跳过下载：%s", target)
-        return target
-    opts = {
-        **_base_opts(out_dir),
-        "format": (
-            f"bv*[height<={settings.max_video_height}]+ba/"
-            f"b[height<={settings.max_video_height}]/b"
-        ),
-        "merge_output_format": "mp4",
-        "outtmpl": str(out_dir / media_name(bvid, p, "%(ext)s")),
-        "noplaylist": True,
-        # 低清单文件（flv）转封装为 mp4，保证浏览器可播
-        # 注意：yt-dlp 内部会自动补 PP 后缀，key 只写 FFmpegVideoRemuxer
-        "postprocessors": [{"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"}],
-    }
-    if progress_hook:
-        opts["progress_hooks"] = [progress_hook]
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.extract_info(build_video_url(bvid, p), download=True)
-    except yt_dlp.utils.DownloadError as e:
-        raise VideoDownloadError(_friendly_download_error(e)) from e
-    if not target.exists():
-        raise VideoDownloadError("视频下载失败：未找到合并后的 mp4 产物（可重试）")
-    return target
-
-
 def _find_existing_media(out_dir: Path, bvid: str, p: int | None) -> Path | None:
-    """查找已下载的媒体文件（音频/视频，排除字幕文件），用于断点续跑跳过。"""
+    """查找已下载的媒体文件（音频，排除字幕文件），用于断点续跑跳过。"""
     prefix = f"{bvid}_p{p}" if p else bvid
     for f in sorted(out_dir.glob(f"{prefix}*")):
         if f.suffix.lower() not in SUB_SUFFIXES:

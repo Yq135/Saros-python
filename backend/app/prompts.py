@@ -148,12 +148,12 @@ VIDEO_OUTLINE_SYSTEM = """你是视频学习大纲整理助手。根据带时间
 4. 按内容自然分段，小节数量约 5-15 个（视频很长可适当更多），顺序与时间一致。
 5. 只输出 JSON 数组，不要输出其他内容。"""
 
-VIDEO_QUESTIONS_SYSTEM = """你是视频学习出题助手。根据视频大纲，生成 5-8 道「看完视频后应能掌握」的开放式问题，每题附参考答案与关联时间点。
+VIDEO_QUESTIONS_SYSTEM = """你是视频学习出题助手。根据带时间戳的字幕内容，生成 5-8 道「看完视频后应能掌握」的开放式问题，每题附参考答案与关联时间点。
 
 要求：
 1. 用中文输出 JSON 数组，每项为 {"question": "题干", "answer": "参考答案", "time": "[MM:SS]"}。
-2. 问题考察对内容的理解与运用，而非记忆琐碎细节；覆盖大纲的核心小节。
-3. time 是该题对应的视频时间点，必须取自大纲中已有的时间点。
+2. 问题考察对内容的理解与运用，而非记忆琐碎细节；覆盖视频的核心内容。
+3. time 是该题对应的视频时间点，必须取自字幕中真实存在的时间点（取相关内容的字幕时间）。
 4. 参考答案具体、准确，60-150 字。
 5. 只输出 JSON 数组，不要输出其他内容。"""
 
@@ -173,12 +173,12 @@ def build_video_outline_messages(*, title: str, subtitle_text: str) -> list[dict
     ]
 
 
-def build_video_question_messages(*, title: str, outline_text: str) -> list[dict]:
-    """组装出题请求：system + 用户消息（标题 + 大纲文本）。"""
+def build_video_question_messages(*, title: str, subtitle_text: str) -> list[dict]:
+    """组装出题请求：system + 用户消息（标题 + 带时间戳的字幕全文）。"""
     parts: list[str] = []
     if title:
         parts.append(f"视频标题：{title}")
-    parts.append(f"视频大纲：\n{outline_text}")
+    parts.append(f"字幕内容（每行格式：[MM:SS] 文本）：\n{subtitle_text}")
     return [
         {"role": "system", "content": VIDEO_QUESTIONS_SYSTEM},
         {"role": "user", "content": "\n\n".join(parts)},

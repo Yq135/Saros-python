@@ -1,11 +1,12 @@
-"""模块三任务编排：B 站视频「下载三件套 → 字幕解析 → 大纲 → 出题 → 入库」。
+"""模块三任务编排：B 站视频「下载字幕 → 解析 → 大纲 → 出题 → 入库」。
 
 由任务队列（task_queue.py）单 worker 串行调用 run_task(task_id)；
 yt-dlp / ffmpeg / LLM 均为同步阻塞调用，worker 侧用 asyncio.to_thread 执行。
 
-步骤与进度（%）：解析链接 2 → 下载字幕 5-25 → 下载音频 25-45 → 下载视频 45-70
-→ 解析字幕 75 → 生成大纲 75-85 → 出题+标签 85-95 → 入库 100。
-断点续跑：三件套文件已存在时跳过对应下载；LLM 阶段重试后重新生成。
+流程决议（v0.9）：不下载视频；先下字幕（CC→AI），下不到才下音频（音频模式，后续迭代）。
+步骤与进度（%）：解析链接 2 → 下载字幕 5-30 → 解析字幕 40 → 生成大纲 40-65
+→ 出题+标签 65-85 → 入库 100。
+断点续跑：字幕文件已存在时跳过下载；LLM 阶段重试后重新生成。
 """
 import json
 import logging
@@ -13,16 +14,18 @@ import shutil
 from pathlib import Path
 
 from app import llm, prompts
-from app.config import settings
 from app.db import get_conn
 from app.services import subtitle_parser, video_download
 
 logger = logging.getLogger("uvicorn.error")
 
 SUBTITLE_MAX_CHARS = 20000  # 字幕超长截断（「全文一次喂」的极端保护，约 2 万字）
-OUTLINE_MAX_TOKENS = 4096  # 大纲 JSON 输出上限
-QUESTION_MAX_TOKENS = 4096  # 出题 JSON 输出上限
-TAG_MAX_TOKENS = 1024  # 推理模型思考占 token，需留足余量（256 时思考耗完导致空输出）
+# 推理模型（deepseek-v4）的 reasoning 也计入 max_tokens：实测十分钟视频大纲的思考
+# 占约 2600+ token（且每次随机增长），8192 仍偶发 finish_reason=length 截断 JSON，
+# 预算给足（用户拍板 16384），配合解析失败自动重试兜底
+OUTLINE_MAX_TOKENS = 16384  # 大纲 JSON 输出上限
+QUESTION_MAX_TOKENS = 16384  # 出题 JSON 输出上限
+TAG_MAX_TOKENS = 1024  # 标签输出预算（256 时思考耗完导致空输出）
 
 STATUS_PENDING = "PENDING"
 STATUS_PROCESSING = "PROCESSING"
@@ -114,43 +117,36 @@ def _run(task_id: int) -> None:
     _update(task_id, status=STATUS_PROCESSING, progress=2, step="解析链接")
     bvid, p = video_download.parse_video_ref(url)
 
-    # 1. 下载字幕（CC → AI）
+    # 1. 下载字幕（CC → AI）；下载不到才下音频（音频模式，后续迭代）
     _update(task_id, step="下载字幕（官方 CC / AI 字幕）")
     _, _, title, mode, subtitle_path = video_download.download_subtitle(url)
     if subtitle_path is None:
         raise VideoTaskError("该视频没有官方 CC 字幕与 AI 字幕，音频模式尚未实现（后续迭代支持）")
-    _update(task_id, progress=25)
+    _update(task_id, progress=30)
 
-    # 2. 下载音频（audio-only 流）
-    _update(task_id, step="下载音频（audio-only 流）")
-    audio_path = video_download.download_audio(url, _download_progress(task_id, 25, 45))
-    _update(task_id, progress=45)
-
-    # 3. 下载视频（清晰度上限封顶，合并 mp4）
-    _update(task_id, step=f"下载视频（{settings.max_video_height}p 以内）")
-    video_path = video_download.download_video(url, _download_progress(task_id, 45, 70))
-    _update(task_id, progress=70)
-
-    # 4. 解析字幕 → 字幕段
+    # 2. 解析字幕 → 字幕段
     _update(task_id, step="解析字幕")
     segments = subtitle_parser.parse_subtitle(subtitle_path)
     if not segments:
         raise VideoTaskError("字幕解析失败：字幕文件内容为空或格式异常，可重试")
-    _update(task_id, progress=75)
+    _update(task_id, progress=40)
 
-    # 5. 大纲（字幕全文一次喂）
+    # 3. 大纲（字幕全文一次喂）
     _update(task_id, step="生成大纲（LLM 提炼）")
     outline = _generate_outline(title, segments)
+    _update(task_id, progress=65)
+
+    # 4. 出题（基于字幕全文）+ 推荐标签（基于大纲）
+    _update(task_id, step="生成题目与推荐标签（LLM）")
+    questions, tags = _generate_questions(title, segments, outline)
     _update(task_id, progress=85)
 
-    # 6. 出题 + 推荐标签
-    _update(task_id, step="生成题目与推荐标签（LLM）")
-    questions, tags = _generate_questions(title, outline)
-    _update(task_id, progress=95)
-
-    # 7. 汇总入库
+    # 5. 汇总入库（音频模式未实现，音频路径暂空）
     _update(task_id, step="写入知识库")
-    _save_video(task_id, bvid, title, mode, subtitle_path, audio_path, video_path, outline, segments, questions, tags)
+    _save_video(
+        task_id, bvid, title, mode, subtitle_path, None, None,
+        outline, segments, questions, tags,
+    )
     _update(task_id, status=STATUS_SUCCESS, progress=100, step="完成")
     logger.info("任务 %s 完成（%s 模式，%d 小节，%d 题）", task_id, mode, len(outline), len(questions))
 
@@ -174,29 +170,43 @@ def _segments_to_text(segments: list[dict]) -> str:
 
 
 def _generate_outline(title: str, segments: list[dict]) -> list[dict]:
+    """大纲生成：解析失败自动重试一次（推理模型思考量随机，偶发超预算截断 JSON）。"""
     messages = prompts.build_video_outline_messages(
         title=title, subtitle_text=_segments_to_text(segments)
     )
-    raw = llm.chat(messages, temperature=0.3, max_tokens=OUTLINE_MAX_TOKENS, timeout=300.0)
-    outline = prompts.parse_video_outline(raw)
-    if not outline:
-        raise VideoTaskError("大纲生成失败：模型输出无法解析，请重试")
-    return outline
+    for _ in range(2):
+        raw = llm.chat(messages, temperature=0.3, max_tokens=OUTLINE_MAX_TOKENS, timeout=300.0)
+        outline = prompts.parse_video_outline(raw)
+        if outline:
+            return outline
+        logger.warning("大纲 JSON 解析失败，重试一次")
+    raise VideoTaskError("大纲生成失败：模型输出无法解析（已自动重试），请点击重试再试一次")
 
 
-def _generate_questions(title: str, outline: list[dict]) -> tuple[list[dict], list[str]]:
+def _generate_questions(
+    title: str, segments: list[dict], outline: list[dict]
+) -> tuple[list[dict], list[str]]:
+    """出题基于字幕全文（与网页出题一致：基于原文出题+答案）；推荐标签基于大纲（已提炼更凝练）。
+
+    解析失败自动重试一次（同大纲：推理模型偶发截断）。
+    """
+    messages = prompts.build_video_question_messages(
+        title=title, subtitle_text=_segments_to_text(segments)
+    )
+    questions: list[dict] = []
+    for _ in range(2):
+        raw = llm.chat(
+            messages, temperature=0.5, max_tokens=QUESTION_MAX_TOKENS, timeout=300.0
+        )
+        questions = prompts.parse_video_questions(raw)
+        if questions:
+            break
+        logger.warning("题目 JSON 解析失败，重试一次")
+    if not questions:
+        raise VideoTaskError("题目生成失败：模型输出无法解析（已自动重试），请点击重试再试一次")
     outline_text = "\n".join(
         f"- [{_fmt_ts(o['time_sec'])}] {o['title']}：{o['summary']}" for o in outline
     )
-    raw = llm.chat(
-        prompts.build_video_question_messages(title=title, outline_text=outline_text),
-        temperature=0.5,
-        max_tokens=QUESTION_MAX_TOKENS,
-        timeout=300.0,
-    )
-    questions = prompts.parse_video_questions(raw)
-    if not questions:
-        raise VideoTaskError("题目生成失败：模型输出无法解析，请重试")
     tag_raw = llm.chat(
         prompts.build_video_tag_messages(title=title, outline_text=outline_text),
         max_tokens=TAG_MAX_TOKENS,

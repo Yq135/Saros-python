@@ -110,7 +110,7 @@ def get_task(tid: int):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            SELECT t.id, t.bvid, t.status, t.progress, t.step_desc, t.error_msg, t.created_at,
+            SELECT t.id, t.bvid, t.url, t.status, t.progress, t.step_desc, t.error_msg, t.created_at,
                    COALESCE(v.title, ''), v.mode, v.outline,
                    v.local_subtitle_path, v.local_audio_path, v.local_video_path,
                    COALESCE(v.suggested_tags, '{{}}'), v.id AS video_id
@@ -123,8 +123,12 @@ def get_task(tid: int):
         row = cur.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="任务不存在")
-        video_id = row[14]
-        outline_raw = row[9] or "[]"
+        video_id = row[15]
+        # 在线播放器 page 参数：从原始链接还原分集号
+        _, p = video_download.parse_video_ref(
+            (row[2] or "") or f"https://www.bilibili.com/video/{row[1]}"
+        )
+        outline_raw = row[10] or "[]"
         try:
             outline = json.loads(outline_raw)
         except (json.JSONDecodeError, TypeError):
@@ -162,18 +166,19 @@ def get_task(tid: int):
     return schemas.BilibiliTaskDetail(
         id=row[0],
         bvid=row[1],
-        status=row[2],
-        progress=row[3],
-        step_desc=row[4],
-        error_msg=row[5],
-        created_at=row[6],
-        title=row[7],
-        mode=row[8],
+        p=p,
+        status=row[3],
+        progress=row[4],
+        step_desc=row[5],
+        error_msg=row[6],
+        created_at=row[7],
+        title=row[8],
+        mode=row[9],
         outline=[schemas.VideoOutlineItem(**o) for o in outline if isinstance(o, dict)],
-        suggested_tags=list(row[13] or []),
-        video_url=media_url(row[12]),
-        audio_url=media_url(row[11]),
-        subtitle_url=media_url(row[10]),
+        suggested_tags=list(row[14] or []),
+        video_url=media_url(row[13]),
+        audio_url=media_url(row[12]),
+        subtitle_url=media_url(row[11]),
         segments=segments,
         questions=questions,
     )

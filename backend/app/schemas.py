@@ -141,6 +141,7 @@ class VideoQuestionOut(BaseModel):
 class BilibiliTaskDetail(BaseModel):
     id: int
     bvid: str
+    p: int | None = None  # 多 P 合集的分集号（在线播放器 page 参数）
     status: str
     progress: int
     step_desc: str | None = None

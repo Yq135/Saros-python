@@ -227,3 +227,4 @@ node_modules/
 backend/data/
 /.idea/
 /.claude/
+/backend/scripts/

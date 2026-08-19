@@ -8,7 +8,9 @@ async function request(path, options = {}) {
   })
   if (!res.ok) {
     const body = await res.json().catch(() => null)
-    throw new Error(body?.detail || `请求失败（HTTP ${res.status}）`)
+    const err = new Error(body?.detail || `请求失败（HTTP ${res.status}）`)
+    err.body = body // 部分接口附带额外字段（如 409 的 existing_id）
+    throw err
   }
   return res.status === 204 ? null : res.json()
 }
@@ -140,4 +142,15 @@ export const webpageApi = {
   },
   get: (id) => request(`/webpages/${id}`),
   remove: (id) => request(`/webpages/${id}`, { method: 'DELETE' }),
+}
+
+// ---------- 模块三：B 站视频 ----------
+
+export const bilibiliApi = {
+  // 提交任务（后台异步执行，前端轮询列表）；重复提交抛 Error 且 err.body.existing_id 为已有任务 id
+  create: (data) => request('/bilibili/tasks', { method: 'POST', body: JSON.stringify({ url: data.url }) }),
+  list: () => request('/bilibili/tasks'),
+  get: (id) => request(`/bilibili/tasks/${id}`),
+  retry: (id) => request(`/bilibili/tasks/${id}/retry`, { method: 'POST' }),
+  remove: (id) => request(`/bilibili/tasks/${id}`, { method: 'DELETE' }),
 }

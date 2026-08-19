@@ -179,6 +179,7 @@ CREATE TABLE bilibili_tasks (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     bvid VARCHAR(20) NOT NULL,
+    url TEXT NOT NULL DEFAULT '',     -- 原始链接（含 p 分集参数；重试/断点续跑需要）
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
         CHECK (status IN ('PENDING', 'PROCESSING', 'SUCCESS', 'FAILED')),
     progress INT DEFAULT 0,

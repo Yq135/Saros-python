@@ -97,3 +97,61 @@ class WebArticleDetail(BaseModel):
     suggested_tags: list[str] = Field(default_factory=list)
     questions: list[WebpageQuestionOut] = Field(default_factory=list)
     created_at: datetime
+
+
+# ---------- 模块三：B 站视频任务 ----------
+
+class BilibiliTaskCreate(BaseModel):
+    url: str = Field(..., min_length=1, description="B 站视频链接（BV 号或 b23.tv 短链）")
+
+
+class BilibiliTaskListItem(BaseModel):
+    id: int
+    bvid: str
+    title: str = ""
+    mode: str | None = None
+    status: str
+    progress: int
+    step_desc: str | None = None
+    error_msg: str | None = None
+    created_at: datetime
+
+
+class VideoOutlineItem(BaseModel):
+    time_sec: float
+    title: str
+    summary: str = ""
+
+
+class VideoSegmentOut(BaseModel):
+    id: int
+    start_ts: int
+    end_ts: int | None
+    content: str
+
+
+class VideoQuestionOut(BaseModel):
+    id: int
+    question: str
+    reference_answer: str = ""
+    ts: int
+    sort_order: int
+
+
+class BilibiliTaskDetail(BaseModel):
+    id: int
+    bvid: str
+    status: str
+    progress: int
+    step_desc: str | None = None
+    error_msg: str | None = None
+    created_at: datetime
+    title: str = ""
+    mode: str | None = None
+    outline: list[VideoOutlineItem] = Field(default_factory=list)
+    suggested_tags: list[str] = Field(default_factory=list)
+    video_url: str | None = None  # /api/media/ 相对路径，前端拼 base
+    audio_url: str | None = None
+    subtitle_url: str | None = None
+    segments: list[VideoSegmentOut] = Field(default_factory=list)
+    questions: list[VideoQuestionOut] = Field(default_factory=list)

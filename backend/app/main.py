@@ -4,10 +4,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app import embeddings
 from app.db import ensure_user
-from app.routers import knowledge, qa, webpages
+from app.routers import bilibili, knowledge, qa, webpages
+from app.services import task_queue, video_download, video_task
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -19,7 +21,14 @@ async def lifespan(app: FastAPI):
     logger.info("默认用户就绪 id=%s", uid)
     model = embeddings.get_model()
     logger.info("嵌入模型已加载（%s 维）", model.get_embedding_dimension())
+    # 视频任务：重启后中间态任务标记失败（可重试），启动单 worker 串行队列
+    recovered = video_task.recover_interrupted()
+    if recovered:
+        logger.info("服务重启：%d 个中断的视频任务已标记失败（可重试）", recovered)
+    video_download.MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+    task_queue.start()
     yield
+    await task_queue.stop()
 
 
 app = FastAPI(title="Saros", version="0.2.0", lifespan=lifespan)
@@ -35,6 +44,10 @@ app.add_middleware(
 app.include_router(knowledge.router)
 app.include_router(qa.router)
 app.include_router(webpages.router)
+app.include_router(bilibili.router)
+
+# 本地媒体静态服务（视频/音频/字幕）：StaticFiles 支持 Range 请求，播放器可拖动
+app.mount("/api/media", StaticFiles(directory=str(video_download.MEDIA_ROOT)), name="media")
 
 
 @app.get("/api/health")

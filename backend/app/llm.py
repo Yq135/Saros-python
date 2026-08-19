@@ -44,14 +44,20 @@ def stream_chat(messages: list[dict], *, temperature: float = 0.7, max_tokens: i
                 yield delta
 
 
-def chat(messages: list[dict], *, temperature: float = 0.3, max_tokens: int = 512) -> str:
-    """非流式对话：返回完整文本（推荐标签等轻量任务，短超时）。"""
+def chat(
+    messages: list[dict],
+    *,
+    temperature: float = 0.3,
+    max_tokens: int = 512,
+    timeout: float = 60.0,
+) -> str:
+    """非流式对话：返回完整文本（推荐标签等轻量任务短超时；大纲/出题等长任务传大 timeout）。"""
     resp = get_client().chat.completions.create(
         model=settings.llm_model,
         messages=messages,
         stream=False,
         temperature=temperature,
         max_tokens=max_tokens,
-        timeout=60.0,
+        timeout=timeout,
     )
     return (resp.choices[0].message.content or "") if resp.choices else ""

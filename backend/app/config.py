@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # 搜索源（免费；ddgs 主力，bing/baidu 兜底）
     search_providers: str = "ddgs,bing,baidu"
 
+    # CORS 允许来源（逗号分隔）。nginx 同源反代部署后浏览器不再跨域、此项不生效；
+    # 默认值仅供 Vite dev server（5173）直连后端时使用，其他来源按需追加
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
     # B 站 cookie 路径（相对路径基于 backend/）与清晰度上限
     cookie_path: str = "data/.cookies.txt"
     max_video_height: int = 720
@@ -56,6 +60,11 @@ class Settings(BaseSettings):
             return str(p)
         candidate = BACKEND_DIR / p
         return str(candidate) if candidate.exists() else self.embedding_model
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """CORS 允许来源列表（由逗号分隔字符串解析）。"""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 settings = Settings()

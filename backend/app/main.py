@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app import embeddings
+from app.config import settings
 from app.db import ensure_user
 from app.routers import bilibili, knowledge, qa, settings as settings_router, webpages
 from app.services import task_queue, video_download, video_task
@@ -33,10 +34,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Saros", version="0.2.0", lifespan=lifespan)
 
-# 本地单用户 Web 应用：仅放行 Vite dev server 跨域
+# CORS 允许来源可配置（CORS_ORIGINS，逗号分隔）；nginx 同源反代时浏览器不跨域、此项不生效
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=settings.cors_origin_list,
     allow_methods=["*"],
     allow_headers=["*"],
 )

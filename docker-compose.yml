@@ -1,0 +1,59 @@
+# Saros 前后端拆分部署：backend（FastAPI）+ frontend（nginx）
+# PG 不在本文件（仍在宿主机，容器经宿主机网络访问）；启动：docker compose up -d --build
+name: saros
+
+services:
+  backend:
+    build: ./backend
+    container_name: saros-backend
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      # 单文件挂载 backend/.env：设置页「保存配置」写回的就是这份文件，宿主侧持久；
+      # 不用 env_file（注入的环境变量优先级更高，会吞掉设置页保存的值，见 docs/部署说明.md）
+      - ./backend/.env:/app/.env
+      # 媒体 / cookie / 嵌入模型与宿主机共用（约 432MB，不入镜像）
+      - ./backend/data:/app/data
+    ports:
+      - "127.0.0.1:8000:8000"   # 仅服务器本机调试/看 /docs 用；对外只走 80，不需要可删
+    restart: unless-stopped
+    stop_grace_period: 120s     # 优雅退出：等队列任务收尾，别直接砍掉下载中的任务
+    networks:
+      - saros-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # 注意：任务队列是进程内单 worker，禁止 docker compose up --scale backend=N
+
+  frontend:
+    build: ./frontend
+    container_name: saros-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy   # 等后端嵌入模型加载完（10~30s）再对外服务
+    restart: unless-stopped
+    networks:
+      - saros-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  saros-net:
+    # 固定子网：容器访问宿主机自身 IP（PG_HOST）时源地址是容器网段 IP，
+    # PG 的 pg_hba.conf 需放行这个网段（一行配置，见 docs/部署说明.md「首次部署」第 4 步）
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

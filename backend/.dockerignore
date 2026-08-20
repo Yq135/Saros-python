@@ -1,0 +1,18 @@
+# 密钥不入镜像：运行时由挂载的 backend/.env 提供（见 docker-compose.yml）
+.env
+.env.*
+
+# 运行时数据：由宿主挂载 backend/data:/app/data（媒体/模型/cookie，约 432MB）
+data/
+
+# Python 杂物
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# 测试与版本控制不进运行镜像
+tests/
+.git/
+.gitignore

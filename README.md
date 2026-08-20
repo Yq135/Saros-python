@@ -30,6 +30,7 @@
 
 ```
 ├── dev.sh              # 一键启动（后端 8000 + 前端 5173，Ctrl+C 同停）
+├── docker-compose.yml  # 前后端容器编排（backend + frontend，PG 留在宿主机）
 ├── db_init.sql         # 数据库初始化脚本（建表 + pgvector 扩展，不用 alembic）
 ├── docs/               # 需求 / 路线图 / 设计文档
 ├── backend/
@@ -87,6 +88,18 @@
 
 > 首次启动会加载嵌入模型（本地 CPU），若网络不通可先从 [ModelScope](https://www.modelscope.cn/AI-ModelScope/bge-small-zh-v1.5) 下载到 `backend/data/models/bge-small-zh-v1.5`，并把 `EMBEDDING_MODEL` 指向该目录。
 
+## Docker 部署（Linux 服务器）
+
+前后端拆分部署：nginx 容器托管前端并反代 `/api` → FastAPI 容器，PG 仍在宿主机。首次部署、日常更新、阶段三切换详见 [docs/部署说明.md](docs/部署说明.md)，核心三条命令：
+
+```bash
+docker compose up -d --build        # 首次部署 / 更新（git pull 后执行）
+docker compose ps                   # 两容器应为 healthy/running
+docker compose logs -f backend      # 后端日志
+```
+
+> 浏览器访问服务器 80 端口；本机开发仍用 `./dev.sh`，互不影响。注意 backend 镜像只在 Linux 上构建（torch CPU 版无 macOS wheel）。
+
 ## 配置项（backend/.env）
 
 | 键 | 说明 |
@@ -100,6 +113,7 @@
 | `COOKIE_PATH` | B 站 cookie 文件路径（相对路径基于 backend/） |
 | `MAX_VIDEO_HEIGHT` | 视频清晰度上限（720p 封顶） |
 | `SKIP_SUBTITLE` | 跳过字幕下载开关（True = 全部视频直接走音频 ASR 模式） |
+| `CORS_ORIGINS` | CORS 允许来源（逗号分隔；nginx 同源反代部署时无需配置） |
 
 ## 测试
 
@@ -123,6 +137,7 @@ cd backend && ~/anaconda3/envs/saros/bin/python -m pytest tests/ -v
 - [docs/ROADMAP.md](docs/ROADMAP.md) —— 三阶段演进路线
 - [docs/PLAN.md](docs/PLAN.md) —— 实施计划
 - [docs/数据库设计说明.md](docs/数据库设计说明.md) —— 数据模型说明
+- [docs/部署方案.md](docs/部署方案.md) / [docs/部署说明.md](docs/部署说明.md) —— 前后端拆分 + Docker 部署
 
 ## License
 

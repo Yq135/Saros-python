@@ -4,7 +4,10 @@ FROM python:3.10-slim
 
 # Python 3.10 必须：yt-dlp 被 pin 在 2026.7.4（最后一个支持 3.10 的版本）
 # ffmpeg：系统级依赖（asr.py 音频切片、视频合并）；tzdata：slim 无时区数据，TZ 需要
-RUN apt-get update \
+# 使用阿里云镜像源加速 apt-get
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    && sed -i 's|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg tzdata \
     && rm -rf /var/lib/apt/lists/*
 
@@ -13,10 +16,14 @@ WORKDIR /app
 # 先只拷 requirements.txt：依赖层可缓存，代码改动不用重装依赖
 COPY requirements.txt .
 # torch 单独装 CPU 版（PyPI 默认 CUDA 版，约 10 倍体积）；装完再装其余依赖，
-# sentence-transformers 发现 torch 已满足，不会拉 CUDA 版
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir -r requirements.txt
-
+# sentence-transformers 发现 torch 已满足，不会拉 CUDA 版。
+# 主源清华 PyPI（依赖/构建依赖齐全），torch 的 +cpu wheel 走上交 pytorch 镜像（补充源）；
+# pin 2.7.1+cpu：一是 2.7.1 明确支持 Python 3.10（更新版本已放弃），
+# 二是主源上的 CUDA 版版本号更高，不 pin 会被 pip 抢走
+RUN pip install --no-cache-dir "torch==2.7.1+cpu" \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple \
+        --extra-index-url https://mirror.sjtu.edu.cn/pytorch-wheels/cpu \
+    && pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 COPY app ./app
 
 # 非 root 运行（UID 1000 为 Linux 服务器首个用户惯例；不一致时见部署文档）

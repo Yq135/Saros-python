@@ -23,6 +23,9 @@ ddgs
 
 # 网页正文抽取
 trafilatura
+# trafilatura 用到 lxml.html.clean，但 lxml 6.x 已把它拆为独立包且 trafilatura 未声明依赖；
+# 不显式安装会 ImportError（lxml.html.clean module is now a separate project lxml_html_clean）
+lxml_html_clean
 
 # B 站视频下载
 # 2026.7.4 起 yt-dlp 弃用 Python 3.10（运行时有弃用警告，功能正常）；环境为 3.10，pin 住版本防止升级后不兼容

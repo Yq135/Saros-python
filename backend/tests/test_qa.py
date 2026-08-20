@@ -7,13 +7,14 @@ import json
 import os
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app import prompts
 from app.db import get_conn
-from app.main import app
 from app.search import SearchResult
 from app.services import qa_service
+
+
+# client 为 conftest.py 共享的会话级夹具（全测试会话一次 lifespan）
 
 
 # ---------------------------------------------------------------
@@ -104,12 +105,6 @@ def _read_sse(resp) -> list[tuple[str, dict]]:
         if ev and data is not None:
             events.append((ev, data))
     return events
-
-
-@pytest.fixture(scope="session")
-def client():
-    with TestClient(app) as c:  # 触发 lifespan：默认用户 + 嵌入模型
-        yield c
 
 
 @pytest.fixture()

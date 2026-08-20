@@ -3,18 +3,13 @@
 测试数据自建自清：创建 id 收集到 cleanup fixture，测试结束（含断言失败）统一删除。
 """
 import pytest
-from fastapi.testclient import TestClient
 
 from app.db import get_conn, get_user_id
 from app.embeddings import encode_query
-from app.main import app
 from app.vector_store import search
 
 
-@pytest.fixture(scope="session")
-def client():
-    with TestClient(app) as c:  # 触发 lifespan：建默认用户 + 加载模型
-        yield c
+# client 为 conftest.py 共享的会话级夹具（全测试会话一次 lifespan）
 
 
 @pytest.fixture()

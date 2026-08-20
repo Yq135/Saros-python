@@ -66,8 +66,11 @@ def apply_settings(fields: dict[str, object]) -> None:
         if field not in fields:
             continue
         value = fields[field]
-        # 写 .env 均为字符串；布尔项转 "True"/"False"（不能先转 str 再 bool，会得到恒 True）
-        env_updates[env_key] = "True" if value else "False" if env_key in BOOL_KEYS else str(value)
+        # 写 .env 均为字符串；布尔项转 "True"/"False"（不能先转 str 再 bool，会得到恒 True），
+        # 非布尔项转 str。注意三元嵌套必须加括号：不加会解析成「值为真 → 恒 "True"」
+        env_updates[env_key] = (
+            ("True" if value else "False") if env_key in BOOL_KEYS else str(value)
+        )
         setattr(settings, field, bool(value) if env_key in BOOL_KEYS else value)
     update_env(env_updates)
     llm.reset_client()

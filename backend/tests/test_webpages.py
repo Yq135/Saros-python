@@ -6,11 +6,12 @@
 import json
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app import prompts
-from app.main import app
 from app.services import webpage_service
+
+
+# client 为 conftest.py 共享的会话级夹具（全测试会话一次 lifespan）
 
 
 # ---------------------------------------------------------------
@@ -126,12 +127,6 @@ def _read_sse(resp) -> list[tuple[str, dict]]:
         if ev and data is not None:
             events.append((ev, data))
     return events
-
-
-@pytest.fixture(scope="session")
-def client():
-    with TestClient(app) as c:  # 触发 lifespan：默认用户 + 嵌入模型
-        yield c
 
 
 @pytest.fixture()
@@ -276,8 +271,10 @@ def test_extract_failure_stream(client, monkeypatch):
         raise webpage_service.WebpageAbort("正文抽取失败，请确认链接可访问")
 
     monkeypatch.setattr(webpage_service, "extract_content", raise_abort)
-    resp = client.post("/api/webpages", json={"url": "https://example.com/404-page.html"})
+    url = "https://example.com/404-page.html"
+    resp = client.post("/api/webpages", json={"url": url})
     events = _read_sse(resp)
     assert events[0][0] == "step" and events[-1][0] == "error"
     assert "正文抽取失败" in events[-1][1]["detail"]
-    assert client.get("/api/webpages").json() == []
+    # 失败不产生文章记录（真实库中可能有其他文章，只断言该链接不存在）
+    assert all(a["url"] != url for a in client.get("/api/webpages").json())

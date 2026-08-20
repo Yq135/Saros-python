@@ -49,17 +49,17 @@ def test_create_and_filter(client, cleanup):
 
     # 标签筛选
     resp = client.get("/api/knowledge", params={"tag": "python"})
-    ids = [k["id"] for k in resp.json()]
+    ids = [k["id"] for k in resp.json()["items"]]
     assert data["id"] in ids
 
     # 关键词筛选
     resp = client.get("/api/knowledge", params={"q": "FastAPI"})
-    ids = [k["id"] for k in resp.json()]
+    ids = [k["id"] for k in resp.json()["items"]]
     assert data["id"] in ids
 
     # 无关筛选不命中
     resp = client.get("/api/knowledge", params={"tag": "不存在的标签"})
-    assert data["id"] not in [k["id"] for k in resp.json()]
+    assert data["id"] not in [k["id"] for k in resp.json()["items"]]
 
     # 标签自动补全
     resp = client.get("/api/tags", params={"q": "web"})
@@ -118,3 +118,96 @@ def test_knn_retrieval(client, cleanup):
     assert hits, "向量检索无结果，嵌入可能未写入"
     assert hits[0]["source_id"] == food_id
     assert hits[0]["similarity"] > 0.3
+
+
+def test_list_pagination(client, cleanup):
+    """分页：total/页码正确、按更新时间倒序（同秒时 id 倒序）、超范围页返回空。"""
+    tag = "分页测试专用"
+    ids = []
+    for content in ("分页笔记A", "分页笔记B", "分页笔记C"):
+        resp = client.post(
+            "/api/knowledge", json={"content": content, "mastery_level": 0, "tags": [tag]}
+        )
+        assert resp.status_code == 201, resp.text
+        ids.append(resp.json()["id"])
+    cleanup += ids
+
+    # 第 1 页：2 条，total=3，最新创建的排最前
+    resp = client.get("/api/knowledge", params={"tag": tag, "page": 1, "page_size": 2})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 3
+    assert data["page"] == 1
+    assert data["page_size"] == 2
+    assert [k["id"] for k in data["items"]] == [ids[2], ids[1]]
+
+    # 第 2 页：剩 1 条
+    resp = client.get("/api/knowledge", params={"tag": tag, "page": 2, "page_size": 2})
+    data = resp.json()
+    assert [k["id"] for k in data["items"]] == [ids[0]]
+
+    # 超范围页：200 + 空列表
+    resp = client.get("/api/knowledge", params={"tag": tag, "page": 99, "page_size": 2})
+    assert resp.status_code == 200
+    assert resp.json()["items"] == []
+
+
+def test_mastery_filter_and_validation(client, cleanup):
+    """掌握度等值筛选 + 非法参数 422。"""
+    r3 = client.post("/api/knowledge", json={"content": "掌握度3的笔记", "mastery_level": 3, "tags": []})
+    r5 = client.post("/api/knowledge", json={"content": "掌握度5的笔记", "mastery_level": 5, "tags": []})
+    assert r3.status_code == 201 and r5.status_code == 201
+    cleanup += [r3.json()["id"], r5.json()["id"]]
+
+    resp = client.get("/api/knowledge", params={"mastery": 3})
+    ids = [k["id"] for k in resp.json()["items"]]
+    assert r3.json()["id"] in ids
+    assert r5.json()["id"] not in ids
+
+    resp = client.get("/api/knowledge", params={"mastery": 5})
+    ids = [k["id"] for k in resp.json()["items"]]
+    assert r5.json()["id"] in ids
+    assert r3.json()["id"] not in ids
+
+    # 非法参数由 FastAPI Query 校验拦截
+    assert client.get("/api/knowledge", params={"mastery": 6}).status_code == 422
+    assert client.get("/api/knowledge", params={"page": 0}).status_code == 422
+    assert client.get("/api/knowledge", params={"page_size": 101}).status_code == 422
+
+
+def test_semantic_search_api(client, cleanup):
+    """POST /api/knowledge/search：语义查询返回命中笔记全文 + 相似度（纯检索）。"""
+    resp = client.post(
+        "/api/knowledge",
+        json={
+            "content": "清蒸鲈鱼的做法：鲈鱼处理干净，铺葱姜上锅蒸八分钟，淋蒸鱼豉油。",
+            "mastery_level": 2,
+            "tags": ["美食"],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    food_id = resp.json()["id"]
+    cleanup.append(food_id)
+    resp = client.post(
+        "/api/knowledge",
+        json={"content": "pytest 支持 fixture 与参数化测试，mark 可标记用例分组。", "mastery_level": 0, "tags": ["测试"]},
+    )
+    assert resp.status_code == 201, resp.text
+    cleanup.append(resp.json()["id"])
+
+    # 语义查询：美食查询应命中鱼笔记
+    resp = client.post("/api/knowledge/search", json={"query": "怎么做清蒸鱼？", "top_k": 5})
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    assert items, "语义查询无结果，嵌入可能未写入"
+    assert items[0]["id"] == food_id
+    assert items[0]["similarity"] > 0.3
+    # 每条含笔记完整字段
+    for key in ("content", "mastery_level", "tags", "created_at", "updated_at", "similarity"):
+        assert key in items[0]
+
+    # 参数校验：top_k 越界 422、空/纯空格查询 422/400
+    assert client.post("/api/knowledge/search", json={"query": "x", "top_k": 0}).status_code == 422
+    assert client.post("/api/knowledge/search", json={"query": "x", "top_k": 51}).status_code == 422
+    assert client.post("/api/knowledge/search", json={"query": ""}).status_code == 422  # min_length=1
+    assert client.post("/api/knowledge/search", json={"query": "   "}).status_code == 400

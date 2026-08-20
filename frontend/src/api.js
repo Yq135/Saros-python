@@ -16,13 +16,20 @@ async function request(path, options = {}) {
 }
 
 export const knowledgeApi = {
+  // 分页列表（知识查询页）：返回 {items, total, page, page_size}
   list: (params = {}) => {
     const qs = new URLSearchParams()
     if (params.q) qs.set('q', params.q)
     if (params.tag) qs.set('tag', params.tag)
+    // mastery 为 0 是合法值，不能用真值判断
+    if (params.mastery !== null && params.mastery !== undefined) qs.set('mastery', params.mastery)
+    if (params.page) qs.set('page', params.page)
+    if (params.page_size) qs.set('page_size', params.page_size)
     const s = qs.toString()
     return request('/knowledge' + (s ? `?${s}` : ''))
   },
+  // 语义查询（小RAG，纯检索）：返回 {items: [笔记字段 + similarity]}
+  search: (data) => request('/knowledge/search', { method: 'POST', body: JSON.stringify(data) }),
   create: (data) => request('/knowledge', { method: 'POST', body: JSON.stringify(data) }),
   update: (id, data) => request(`/knowledge/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   remove: (id) => request(`/knowledge/${id}`, { method: 'DELETE' }),

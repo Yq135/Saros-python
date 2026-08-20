@@ -23,6 +23,32 @@ class KnowledgeOut(BaseModel):
     updated_at: datetime
 
 
+class KnowledgeListOut(BaseModel):
+    """分页列表响应（知识查询页）。"""
+
+    items: list[KnowledgeOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class KnowledgeSearchRequest(BaseModel):
+    """语义查询请求（小RAG：纯检索返回原文，不做 LLM 生成）。"""
+
+    query: str = Field(..., min_length=1, max_length=2000, description="自然语言查询")
+    top_k: int = Field(10, ge=1, le=50, description="返回条数")
+
+
+class KnowledgeHit(KnowledgeOut):
+    """语义查询命中：笔记完整字段 + 相似度分数。"""
+
+    similarity: float = Field(description="余弦相似度 [-1, 1]")
+
+
+class KnowledgeSearchOut(BaseModel):
+    items: list[KnowledgeHit]
+
+
 # ---------- 模块一：联网问答（多轮对话） ----------
 
 class QAAskRequest(BaseModel):

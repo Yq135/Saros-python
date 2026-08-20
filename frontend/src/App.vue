@@ -13,6 +13,7 @@
         <el-menu-item index="/webpages">网页出题</el-menu-item>
         <el-menu-item index="/videos">B站视频</el-menu-item>
         <el-menu-item index="/knowledge">知识沉淀</el-menu-item>
+        <el-menu-item index="/knowledge-query">知识查询</el-menu-item>
         <el-menu-item index="/settings">设置</el-menu-item>
       </el-menu>
     </el-header>
